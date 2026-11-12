@@ -1,0 +1,3 @@
+# Force LF for all text files so a Windows checkout cannot add CRLF to
+# entrypoint.sh and break exec inside the container.
+* text=auto eol=lf
