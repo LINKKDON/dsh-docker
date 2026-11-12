@@ -1,0 +1,32 @@
+# Companion to the `docker run` line in the README: the same flags, in one place,
+# so the loopback-only publish cannot drift to 0.0.0.0 by accident.
+# No `version:` key: it is obsolete in the Compose Spec (Compose v2+).
+# No `init: true` either: the image already runs under tini.
+services:
+  dsh:
+    image: ghcr.io/linkkdon/dsh-docker:latest
+    # To build from this directory instead of pulling, uncomment both lines
+    # (a build: service that still names the GHCR image would retag the local
+    # build as the published one):
+    # build: .
+    # image: dsh-docker:local
+    container_name: deepseek-harness
+    restart: unless-stopped
+    # Loopback-only publish. dsh's /api fence only accepts a Host that is a
+    # loopback name, the listener's own bind IP, or an explicit --trusted-host,
+    # so publishing on 0.0.0.0 loads the page but 403s every API call.
+    ports:
+      - "127.0.0.1:3080:3080"
+    volumes:
+      # dsh state: profiles, credentials, sessions. Survives recreates.
+      - dsh-data:/home/node/.dsh
+      # The tree the agent may read and write. Create it first (`mkdir -p
+      # ./workspace`) and, on Linux, make it writable by uid 1000 (see README).
+      - ./workspace:/workspace
+    # Published a different host port? Tell dsh what the browser will actually
+    # use, so the printed token URL (and its authority-scoped cookie) matches:
+    # environment:
+    #   DSH_PUBLIC_URL: http://127.0.0.1:8080/
+
+volumes:
+  dsh-data:

@@ -8,54 +8,49 @@ name: Build and publish
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**.md'
   schedule:
     - cron: "0 3 * * 1"
   workflow_dispatch:
     inputs:
       dsh_version:
-        description: "DSH version to build (empty = npm latest, or use 'latest' keyword)"
+        description: "DSH version to build (empty = npm latest)"
         required: false
         default: ""
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
   packages: write
 
+# A push and the weekly schedule both publish the `latest` tag; serialise them
+# so two builds can never interleave pushes. cancel-in-progress is off: a run
+# that is already pushing should finish rather than leave a half-updated tag.
+concurrency:
+  group: docker-publish
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
       - name: Resolve upstream dsh version
         id: resolve
         env:
-          REQUESTED_VERSION: ${{ inputs.dsh_version }}
+          # The dispatch input reaches the shell through the environment, never
+          # spliced into the script text: `${{ inputs.* }}` interpolated into a
+          # `run:` block is a command-injection sink for anyone who can dispatch.
+          INPUT_VERSION: ${{ inputs.dsh_version }}
         run: |
-          # If user provided "latest" keyword or empty, resolve npm's latest dist-tag
-          if [ -z "$REQUESTED_VERSION" ] || [ "$REQUESTED_VERSION" = "latest" ]; then
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
+          else
             VERSION="$(npm view @deepseek-ai/dsh version)"
-            NPM_LATEST="$VERSION"
-          else
-            VERSION="$REQUESTED_VERSION"
-            NPM_LATEST="$(npm view @deepseek-ai/dsh version)"
           fi
-
-          # Output is_latest=true only if the resolved version equals npm's latest
-          if [ "$VERSION" = "$NPM_LATEST" ]; then
-            IS_LATEST=true
-          else
-            IS_LATEST=false
+          if [ -z "$VERSION" ]; then
+            echo "::error::could not resolve a dsh version (set dsh_version or check npm access)"
+            exit 1
           fi
-
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "is_latest=$IS_LATEST" >> "$GITHUB_OUTPUT"
-          echo "Resolved DSH version: $VERSION (npm latest: $NPM_LATEST, is_latest: $IS_LATEST)"
+          echo "Resolved DSH version: $VERSION"
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -68,9 +63,12 @@ jobs:
         id: meta
         with:
           images: ghcr.io/${{ github.repository }}
+          # Order matters: metadata-action derives its version label from the
+          # first tag, so the exact version has to come before `latest` or every
+          # image claims to be "latest". `type=sha` expands to sha-<short sha>.
           tags: |
-            type=raw,value=latest,enable=${{ steps.resolve.outputs.is_latest == 'true' }}
             type=raw,value=${{ steps.resolve.outputs.version }}
+            type=raw,value=latest
             type=sha
       - uses: docker/build-push-action@v6
         with:
@@ -79,7 +77,17 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            DSH_VERSION=${{ steps.resolve.outputs.version }}
+          # Without the GHA layer cache both platforms redo the apt + npm install
+          # from scratch on every run.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: |
+            DSH_VERSION=${{ steps.resolve.outputs.version }}
+      - name: Smoke test the published image
+        # "It built" is not "it starts": pull the image that was just pushed and
+        # run the CLI. metadata-action's type=sha tag is sha-<first 7 of SHA>.
+        # `${GITHUB_REPOSITORY,,}`: GitHub keeps the owner's casing (LINKKDON),
+        # but an image reference path must be lowercase and metadata-action already
+        # lowercases it before pushing, so the smoke run has to lowercase it too.
+        shell: bash
+        run: docker run --rm "ghcr.io/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA::7}" --version

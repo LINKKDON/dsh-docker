@@ -1,4 +1,8 @@
-# Exclude unnecessary files from Docker build context
+# Build context is just the Dockerfile and entrypoint.sh; everything else here
+# is repository furniture that would only slow the build down (or, for *.md and
+# .github, leak into the image for no reason).
 .git
 .github
 *.md
+docker-compose*.yml
+LICENSE
