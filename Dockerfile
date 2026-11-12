@@ -3,7 +3,11 @@
 # Official run method: npx @deepseek-ai/dsh web  (listens 127.0.0.1:3080)
 # Upstream repo has no Dockerfile / official image, so this file is the
 # only wrapper layer, and it lives in YOUR repo, under your control.
-ARG DSH_VERSION=0.2.0-rc.2
+# Version is NOT pinned here: default `latest` follows the official
+# npm dist-tag, i.e. whatever `npx @deepseek-ai/dsh` installs.
+# The workflow resolves that tag to an exact version at build time
+# and tags the image with it, so a rebuild always tracks upstream.
+ARG DSH_VERSION=latest
 FROM node:24-bookworm-slim
 
 ARG DSH_VERSION
