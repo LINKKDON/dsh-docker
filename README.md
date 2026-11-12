@@ -4,17 +4,19 @@ Self-built Docker image for [DeepSeek Harness](https://github.com/deepseek-ai/de
 
 Why this repo exists: the upstream repo ships no Dockerfile and no official image, so any Docker image needs a packaging layer. Here that layer is three small files you can read in full:
 
-- `Dockerfile` — base image `node:24`, installs only `@deepseek-ai/dsh@0.2.0-rc.2` from npm. No third-party image or script is pulled in.
+- `Dockerfile` — base image `node:24`, installs only `@deepseek-ai/dsh` from npm. The version is not pinned: the workflow resolves npm's `latest` tag at build time.
 - `entrypoint.sh` — about 20 lines. dsh refuses to bind `0.0.0.0`, so it runs on `127.0.0.1:3081` inside the container and `socat` forwards container port 3080 to it. Nothing else.
 - `.github/workflows/docker-publish.yml` — GitHub Actions builds for `linux/amd64` + `linux/arm64` and pushes only to this repo's own GHCR, using the automatic `GITHUB_TOKEN`. No external secrets needed.
 
 ## Image
 
 ```
-ghcr.io/linkkdon/dsh-docker:0.2.0-rc.2
+ghcr.io/linkkdon/dsh-docker:latest
 ```
 
-Built automatically on every push to `main` and on `v*` tags. After the first publish, the package visibility was set to Public in the package settings.
+The `latest` image always tracks the official upstream release: every build resolves npm's `latest` dist-tag for `@deepseek-ai/dsh` (currently `0.2.2-rc.1` as of 2026-11-12) and also tags the image with that exact version, e.g. `ghcr.io/linkkdon/dsh-docker:0.2.2-rc.1`.
+
+Built automatically on every push to `main` and once a week on a schedule, so new upstream releases are picked up without a manual version bump. After the first publish, the package visibility was set to Public in the package settings.
 
 ## Run
 
@@ -25,7 +27,7 @@ docker run -d \
   -p 127.0.0.1:3080:3080 \
   -v dsh-data:/home/node/.dsh \
   -v "$PWD/workspace:/workspace" \
-  ghcr.io/linkkdon/dsh-docker:0.2.0-rc.2
+  ghcr.io/linkkdon/dsh-docker:latest
 ```
 
 Then open `http://127.0.0.1:3080`. Since dsh 0.2.0 the Web UI needs browser authentication: take the one-time `?token=` URL from the container log (`docker logs deepseek-harness`), open it once to exchange it for a session cookie, then use the UI normally.
@@ -40,7 +42,7 @@ docker build -t dsh-docker:local .
 
 ## Upgrade the dsh version
 
-Change `DSH_VERSION` in the `Dockerfile` and in `.github/workflows/docker-publish.yml`, commit, and push a new `v*` tag.
+No manual version bump is needed: the workflow resolves the upstream `latest` version on every run, and the weekly scheduled run rebuilds automatically when upstream moves. To build a specific version instead, run the workflow manually from the Actions tab and enter the version in the `dsh_version` input.
 
 ## Security notes
 
