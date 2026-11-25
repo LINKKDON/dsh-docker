@@ -41,11 +41,26 @@ RUN apt-get update \
       bubblewrap ca-certificates git python3 ripgrep socat tini \
  && rm -rf /var/lib/apt/lists/* \
  && corepack enable \
- && npm install -g --no-fund --no-audit "@deepseek-ai/dsh@${DSH_VERSION}" \
- && npm cache clean --force \
- && mkdir -p /home/node/.dsh /workspace \
- && chown -R node:node /home/node/.dsh /workspace
+ && mkdir -p /home/node/.dsh /workspace /home/node/.local \
+ && chown -R node:node /home/node/.dsh /workspace /home/node/.local
 
+# dsh is installed as the runtime user, into a prefix that user owns.
+# Installing it with `npm install -g` as root instead would leave the package
+# tree under /usr/local/lib/node_modules owned by root, and anything that has to
+# rewrite dsh's own files at runtime would then fail with EACCES. The Purge
+# plugin is exactly such a case: it backs up the files it is about to patch, and
+# a single unwritable file aborts the whole batch ("Host backup failed ... patch
+# writes cancelled"). Its own error message asks for a user-writable copy and
+# `~/local/bin/dsh`, which is what this prefix provides.
+ENV HOME=/home/node \
+    NPM_CONFIG_PREFIX=/home/node/.local \
+    PATH=/home/node/.local/bin:$PATH
+
+USER node
+RUN npm install -g --no-fund --no-audit "@deepseek-ai/dsh@${DSH_VERSION}" \
+ && npm cache clean --force
+
+USER root
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 

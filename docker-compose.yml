@@ -20,6 +20,11 @@ services:
     volumes:
       # dsh state: profiles, credentials, sessions. Survives recreates.
       - dsh-data:/home/node/.dsh
+      # Optional: the installed dsh tree. Mount it only if you want runtime
+      # patches to dsh's own files (the Purge plugin) to survive recreates.
+      # Uncommenting also means a `docker pull` of a newer image no longer
+      # replaces the old packages, so you have to clear the volume to upgrade.
+      # - dsh-app:/home/node/.local
       # The tree the agent may read and write. Create it first (`mkdir -p
       # ./workspace`) and, on Linux, make it writable by uid 1000 (see README).
       - ./workspace:/workspace
@@ -30,3 +35,4 @@ services:
 
 volumes:
   dsh-data:
+  # dsh-app:

@@ -109,6 +109,56 @@ Environment variables understood by the image:
 | `DSH_HOME` | `/home/node/.dsh` | dsh state directory (profiles, credentials, sessions). Back it with a volume. |
 | `DSH_VERSION` | resolved at build time | **Informational only.** `-e DSH_VERSION=0.3.0` does not change the installed version — rebuild the image instead. `docker run --rm <image> --version` prints what is actually installed. |
 
+## Where dsh is installed, and why
+
+dsh is installed **as the `node` user into `/home/node/.local`**, not with a root
+`npm install -g` into `/usr/local`. The difference matters at run time, not just
+for tidiness:
+
+- A root-installed tree under `/usr/local/lib/node_modules` is readable but not
+  writable by uid 1000, and `docker exec`-ing as root to fix permissions is not a
+  durable answer.
+- Some operations rewrite dsh's own files while it runs. The **Purge** plugin is
+  the clearest example: before applying a batch of patches it backs the target
+  files up, and one unwritable file aborts the entire batch —
+  `Host backup failed (65 files); patch writes cancelled`. Its own message asks
+  for "a user-writable copy" and `~/local/bin/dsh`, which is exactly what this
+  prefix provides.
+
+So the image sets:
+
+```
+NPM_CONFIG_PREFIX=/home/node/.local
+PATH=/home/node/.local/bin:$PATH
+```
+
+and `entrypoint.sh` resolves `dsh` through `PATH`, so nothing else had to change.
+Verify from a running container:
+
+```bash
+docker exec -u node deepseek-harness sh -c 'command -v dsh; ls -ld /home/node/.local/lib/node_modules/@deepseek-ai'
+```
+
+Both should be under `/home/node/.local` and owned by `node`.
+
+**Persistence caveat.** `/home/node/.local` is part of the container's writable
+layer, so patches applied to dsh's own files survive `docker restart` but are
+**lost when the container is recreated** (new image, edited compose file). If you
+want them to survive a rebuild, mount it:
+
+```bash
+-v dsh-app:/home/node/.local
+```
+
+Only `/home/node/.dsh` (declared as `VOLUME`) and `/workspace` are persistent out
+of the box.
+
+**Security trade-off.** This hands the running agent write access to its own
+code, which includes the approval and sandbox logic in its JavaScript. That is
+inherent to what Purge does — it is not a side effect of the prefix choice — but
+it is the reason the prefix is scoped to `@deepseek-ai` packages rather than to
+all of `/usr/local/lib/node_modules`.
+
 ## Workspace and file ownership (Linux)
 
 The container runs as the unprivileged `node` user, **uid 1000**. A bind mount keeps the host directory's owner, so if `./workspace` belongs to your own uid (say 1001), the agent gets `EACCES` on every write — which is easy to misread as a sandbox problem. Either:
@@ -192,6 +242,20 @@ The `HEALTHCHECK` requires both `socat` on `$DSH_PORT` (3080) and an HTTP respon
 
 **`EACCES` / `Permission denied` when the agent writes to the workspace.**
 File ownership on Linux — see [Workspace and file ownership](#workspace-and-file-ownership-linux).
+
+**A plugin that patches dsh's own files fails with `Host backup failed … patch writes cancelled`.**
+The running user cannot write the package tree. This image installs dsh under
+`/home/node/.local` for exactly that reason (see [Where dsh is installed](#where-dsh-is-installed-and-why)),
+so check that you are not running an older image:
+
+```bash
+docker exec -u node deepseek-harness sh -c 'command -v dsh; ls -ld /home/node/.local/lib/node_modules/@deepseek-ai'
+```
+
+If `command -v dsh` prints `/usr/local/bin/dsh`, the container is still on the old
+layout — `docker pull` and recreate it. Also note that any patches applied this way
+live in the writable layer and are lost when the container is recreated, unless
+you mount `/home/node/.local` (see the persistence caveat in that section).
 
 **Agent commands fail with a sandbox error.**
 See [Sandbox](#sandbox). Most cases are bubblewrap unavailable *and* Landlock unavailable on this kernel.
