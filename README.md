@@ -129,10 +129,17 @@ So the image sets:
 
 ```
 NPM_CONFIG_PREFIX=/home/node/.local
-PATH=/home/node/.local/bin:$PATH
+PATH=/home/node/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ```
 
-and `entrypoint.sh` resolves `dsh` through `PATH`, so nothing else had to change.
+`PATH` is written out in full instead of `$PATH:...`, and the install layer ends
+with `test -x /home/node/.local/bin/dsh`, so a prefix that npm ignored fails the
+build rather than the container. `/usr/local/bin/dsh` is a symlink to the prefix
+binary: shorter for `docker exec`, and harmless because it points at the writable
+copy. `entrypoint.sh` additionally refuses to start with
+`'dsh' is not on PATH (PATH=...)` instead of the bare `dsh: not found` that a
+wrong prefix used to produce.
+
 Verify from a running container:
 
 ```bash
@@ -143,12 +150,27 @@ Both should be under `/home/node/.local` and owned by `node`.
 
 **Persistence caveat.** `/home/node/.local` is part of the container's writable
 layer, so patches applied to dsh's own files survive `docker restart` but are
-**lost when the container is recreated** (new image, edited compose file). If you
-want them to survive a rebuild, mount it:
+**lost when the container is recreated** (new image, edited compose file).
+
+To keep them, mount a volume there — **but seed it first.** A bind mount replaces
+the directory wholesale, so an empty `./app` hides the dsh that the image just
+installed and the container dies with `dsh: not found`:
 
 ```bash
--v dsh-app:/home/node/.local
+mkdir -p ./app
+docker create --name dsh-seed ghcr.io/linkkdon/dsh-docker:latest
+docker cp dsh-seed:/home/node/.local/. ./app/
+docker rm dsh-seed
 ```
+
+then add `- ./app:/home/node/.local` (or `- dsh-app:/home/node/.local` for a
+named volume, seeded the same way). Two consequences to accept:
+
+- A pulled image no longer changes the packages: the volume wins. To upgrade,
+  empty `./app` and seed it again from the new image, which also drops the
+  patches.
+- Optional smoke check: `docker run --rm --entrypoint sh <image> -c 'command -v dsh'`
+  prints the resolved path.
 
 Only `/home/node/.dsh` (declared as `VOLUME`) and `/workspace` are persistent out
 of the box.

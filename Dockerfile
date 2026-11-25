@@ -52,15 +52,34 @@ RUN apt-get update \
 # a single unwritable file aborts the whole batch ("Host backup failed ... patch
 # writes cancelled"). Its own error message asks for a user-writable copy and
 # `~/local/bin/dsh`, which is what this prefix provides.
+#
+# PATH is spelled out in full rather than as `$PATH:...`: a self-reference only
+# expands if the builder resolves the base image's ENV at that point, and when it
+# does not, every binary lookup breaks at once (the container dies with
+# "dsh: not found" and nothing else). The explicit list is one line of noise for
+# a failure mode that is otherwise very hard to read.
 ENV HOME=/home/node \
     NPM_CONFIG_PREFIX=/home/node/.local \
-    PATH=/home/node/.local/bin:$PATH
+    PATH="/home/node/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 USER node
+# `test -x` is the guard that makes a wrong prefix a build failure instead of a
+# runtime mystery: if npm ever ignores NPM_CONFIG_PREFIX and installs under
+# /usr/local anyway, this layer fails instead of publishing an image whose CLI is
+# unreachable.
 RUN npm install -g --no-fund --no-audit "@deepseek-ai/dsh@${DSH_VERSION}" \
- && npm cache clean --force
+ && npm cache clean --force \
+ && test -x "$NPM_CONFIG_PREFIX/bin/dsh" \
+ && "$NPM_CONFIG_PREFIX/bin/dsh" --version
 
 USER root
+# Belt and braces: a symlink in the default PATH location means `dsh` also
+# resolves for `docker exec` setups that reset PATH, and for anyone who shells in
+# without the image ENV. It points at the writable copy, so patches still land in
+# the prefix.
+RUN ln -sfn /home/node/.local/bin/dsh /usr/local/bin/dsh \
+ && /usr/local/bin/dsh --version
+
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 

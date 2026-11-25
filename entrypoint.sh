@@ -11,6 +11,17 @@
 # The host side must still be published to loopback only (see docker-compose.yml).
 set -eu
 
+# Preflight. A missing binary otherwise surfaces as a bare "dsh: not found" from
+# the `&` line below, followed by "dsh web exited during startup", which reads
+# like dsh crashed rather than like the PATH is wrong. Printing the resolved
+# paths and the PATH itself turns that into a one-line diagnosis.
+for bin in dsh node socat; do
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    echo "entrypoint: '$bin' is not on PATH (PATH=${PATH:-<unset>})" >&2
+    exit 1
+  fi
+done
+
 INTERNAL_PORT="${DSH_INTERNAL_PORT:-3081}"
 BRIDGE_PORT="${DSH_PORT:-3080}"
 PUBLIC_URL="${DSH_PUBLIC_URL:-http://127.0.0.1:${BRIDGE_PORT}/}"

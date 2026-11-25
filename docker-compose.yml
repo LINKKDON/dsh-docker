@@ -20,11 +20,17 @@ services:
     volumes:
       # dsh state: profiles, credentials, sessions. Survives recreates.
       - dsh-data:/home/node/.dsh
-      # Optional: the installed dsh tree. Mount it only if you want runtime
-      # patches to dsh's own files (the Purge plugin) to survive recreates.
-      # Uncommenting also means a `docker pull` of a newer image no longer
-      # replaces the old packages, so you have to clear the volume to upgrade.
-      # - dsh-app:/home/node/.local
+      # Optional, and NOT usable empty: a bind mount or volume replaces the whole
+      # directory, so an empty ./app hides the dsh the image installed and the
+      # container dies with "dsh: not found". Seed it before enabling this line:
+      #   mkdir -p ./app
+      #   docker create --name dsh-seed ghcr.io/linkkdon/dsh-docker:latest
+      #   docker cp dsh-seed:/home/node/.local/. ./app/
+      #   docker rm dsh-seed
+      # Once mounted, a pulled image no longer changes the packages (the volume
+      # wins); upgrading means emptying ./app and seeding it again, which drops
+      # the patches as well.
+      # - ./app:/home/node/.local
       # The tree the agent may read and write. Create it first (`mkdir -p
       # ./workspace`) and, on Linux, make it writable by uid 1000 (see README).
       - ./workspace:/workspace
@@ -35,4 +41,3 @@ services:
 
 volumes:
   dsh-data:
-  # dsh-app:

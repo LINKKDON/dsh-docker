@@ -89,5 +89,28 @@ jobs:
         # `${GITHUB_REPOSITORY,,}`: GitHub keeps the owner's casing (LINKKDON),
         # but an image reference path must be lowercase and metadata-action already
         # lowercases it before pushing, so the smoke run has to lowercase it too.
+        #
+        # Three checks, because `--version` alone passed while the container still
+        # died at runtime with "dsh: not found":
+        #   1. dsh resolves through PATH (not just via an explicit path).
+        #   2. the resolved binary lives in the user-owned prefix, i.e. the whole
+        #      point of installing as `node` -- otherwise runtime patches that
+        #      rewrite dsh's own files get EACCES again.
+        #   3. the running user can actually write that package tree.
         shell: bash
-        run: docker run --rm "ghcr.io/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA::7}" --version
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA::7}"
+          docker run --rm "$IMAGE" --version
+          docker run --rm --entrypoint sh "$IMAGE" -c '
+            set -eu
+            resolved="$(command -v dsh)"
+            echo "dsh -> $resolved"
+            case "$resolved" in
+              /home/node/.local/bin/dsh|/usr/local/bin/dsh) ;;
+              *) echo "dsh resolved outside the user-owned prefix: $resolved"; exit 1 ;;
+            esac
+            test -L /usr/local/bin/dsh
+            test -x /home/node/.local/bin/dsh
+            test -w /home/node/.local/lib/node_modules/@deepseek-ai
+            echo "prefix is writable and on PATH"
+          '
